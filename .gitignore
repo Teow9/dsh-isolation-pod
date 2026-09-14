@@ -1,0 +1,14 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.log
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 隔离舱运行期产物（沙箱、导出、临时验证文件）
+.pod-*/
+stage*.js
