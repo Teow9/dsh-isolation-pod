@@ -20,7 +20,11 @@
   "files": [
     "lib",
     "README.md",
-    "需求说明.md"
+    "README.en.md",
+    "使用教程.md",
+    "需求说明.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "dsh": {
     "client": {

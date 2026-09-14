@@ -6,6 +6,8 @@
 **English** — A resident DSH plugin that runs sandboxed tasks outside the main session. The main session stays
 unaware by default; returning a result or exporting files is manual-only and singly authorized.
 
+**简体中文** | [English](README.en.md)
+
 | | |
 |---|---|
 | 形态 | 本地包 + profile patch 行（**不是**动态 Cordis 插件，重启后常驻、无需审批） |
@@ -40,7 +42,8 @@ unaware by default; returning a result or exporting files is manual-only and sin
 - **结果返回与文件导出互相独立**：两者不自动触发；导出默认单次授权，每次都要重新确认。
 - **常驻且免审批**：作为 patch 行随 dsh 启动加载，重启后自动恢复配置与任务记录，不出现审批卡片。
 - **多轮对话**：任务详情即对话视图，可就同一会话继续追问（见[多轮对话](#多轮对话)）。
-- **执行记录可查、可清**：对话转写、工具调用、思考过程、生成文件清单都在面板内；清理不影响主会话与沙箱外文件。
+- **执行记录可查、可清**：对话转写、工具调用、思考过程、生成文件清单都在面板内，文件内容可就地预览；
+  清理不影响主会话与沙箱外文件。
 
 ## 工作原理
 
@@ -274,6 +277,7 @@ Host 半在 Web 服务上注册了前缀路由 `/isolation-pod`。
 6. **多轮对话不跨进程**：重启后旧任务只能查看 / 导出。
 7. **日志上限**：内存 500 条 / 任务，落盘 80 条 / 任务，超出部分只存在于子会话日志中。
 8. **本机 profile 级配置**：换机器或换 profile 需重新放置包与 patch 行。
+9. **文件预览有硬上限**：单文件 ≤300 KB，面板一次最多显示 20000 字符（超出提示"已截断显示"）。
 
 ## 开发
 
@@ -312,4 +316,4 @@ lib\client.js    Client 半：手写 __ModuleLoader__ bundle，注册 sidebar.pa
 
 ## 许可
 
-MIT（见 `package.json` 的 `license` 字段；发布前请在仓库内补一份 `LICENSE` 文件）。
+MIT，见 [`LICENSE`](LICENSE)（`package.json` 的 `license` 字段同为 MIT）。
