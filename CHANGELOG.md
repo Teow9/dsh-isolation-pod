@@ -7,6 +7,8 @@
 
 ## [未发布]
 
+## [0.1.1] - 2026-09-15
+
 ### 新增
 
 - **面板文件内容预览**：任务详情的「生成文件」列表中，每个文件行新增 `预览` 按钮，
@@ -17,6 +19,11 @@
 
 - 新增 `LICENSE`（MIT）与 `README.en.md`（英文文档），中英文 README 互相链接。
 - README 与使用教程同步补上文件预览的用法与硬上限说明。
+
+### 说明
+
+- 本版**只有 Client 半与文档变更**（Host 半未改）：`git pull` 后浏览器会自动重载面板，
+  **无需重启 dsh**，`/status` 的 `build` 仍为 5。
 
 ## [0.1.0] - 2026-09-14
 
@@ -64,5 +71,6 @@
 - **多轮对话不跨进程**：dsh 重启后旧任务只能查看与导出。
 - 面板当前只列文件清单，**不做文件内容预览**（可经 `readSandboxFile` 接口读取，≤300 KB）。
 
-[未发布]: https://github.com/Teow9/dsh-isolation-pod/compare/v0.1.0...HEAD
+[未发布]: https://github.com/Teow9/dsh-isolation-pod/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Teow9/dsh-isolation-pod/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Teow9/dsh-isolation-pod/releases/tag/v0.1.0

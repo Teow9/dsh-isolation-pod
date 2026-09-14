@@ -1,6 +1,6 @@
 {
   "name": "dsh-isolation-pod",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "隔离舱：在 DSH 主会话之外运行受沙箱约束的隔离任务；主会话默认完全无感，结果返回与文件导出都要手动确认。",
   "type": "module",
   "license": "MIT",
