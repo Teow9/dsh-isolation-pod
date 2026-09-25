@@ -7,6 +7,89 @@
 
 ## [未发布]
 
+## [0.1.2] - 2026-09-25
+
+适配 DSH **0.1.7**（桌面版 Desktop 0.1.7-rc.2 与 `dsh web` 共用同一套 profile 与宿主）。
+本版修掉三处在 0.1.7 上会让插件**完全不可用**的接口变更、一处**在特定沙箱根拼写下会让每个任务都被中止**
+的自检边界问题，并补齐桌面版特有的令牌通道。（Host 半改动累计到 `build: 7`。）
+
+### 修复
+
+- **`ctx.shell.run` → `ctx.shell.execute`**：0.1.7 的 shell 能力是
+  `resolve(request)` + `execute(spec)`，返回进程句柄、由 `handle.result()` 给出 `ShellRunResult`。
+  旧代码直接调用并不存在的 `run()`，导致创建沙箱目录、导出、清理全部失败
+  （`startTask` 只会返回 `MKDIR` 错误）。现在按能力探测选择入口，`/status` 的
+  `compat.shellApi` 会报告实际用了哪一个。
+- **令牌投递改为结构化索引注入行**：桌面版页面由 Electron 的 `serveWebDocument` 直接发出，
+  **不会**经过 `webServer.renderIndex()`，因此旧的 `tapIndex` 在桌面版永不执行，
+  页面上没有 `window.__DSH_IPP__`，面板所有调用都 403。现在改为
+  `webserver/index-inject` 的 `{ kind: 'global' }` 行——Web 版渲染进 HTML，桌面版经 IPC 交给渲染进程。
+- **`followup` 消息形状**：`MessageSource` 是闭合联合 `user | model | tool | system-prompt`，
+  旧的 `{ kind: 'plugin', … }` 已不是合法来源，改为 `{ kind: 'user' }`。
+- **主会话识别**：0.1.7 的会话列表快照不再有 `current` 字段，面板因此一直显示「未定位到主会话」、
+  **无法启动任何任务**。改为按内置面板同一算法解析——快照里 `retainedBy.mainView > 0` 的那个会话
+  （`replaceMain` 持有该引用，打开面板并不会释放它），并保留旧字段作为兜底。
+- **沙箱根目录归一化 / 越界写自检的边界**：探针落在根目录的**上一级**，而 `E:\pod-work\` 这种尾部反斜杠
+  会让探针落回沙箱内部（写入合法 → 自检判定"越界写未被拒绝"），于是**每个任务都会被中止**。
+  现在配置值在写入与读回时都归一化（去尾部反斜杠、盘符根保留一个分隔符）；根目录若本身就是盘符根
+  （如 `E:\`），没有更上一级可探，自检标记为 `skipped-no-parent` 并在面板显示
+  「未做越界写自检（沙箱根是盘符根）」，任务**不再被误判中止**。
+  自检结论同时以 `sandboxProbe`（`denied` / `skipped-no-parent` / `allowed` / `ambiguous`）随任务记录暴露。
+
+### 新增
+
+- **`GET /isolation-pod/bootstrap`**：对**已被 harness 浏览器认证**的调用者返回令牌。
+  桌面版 release 构建没有「刷新页面」入口（重载菜单只在开发构建注册），
+  而客户端半是经模块图推送热挂载的、拿不到随页面加载的注入行——这条路由正是首次安装不刷新即可用的原因。
+  无 cookie 时返回 401。
+- **客户端令牌获取链**：`__DSH_IPP__` → `/isolation-pod/bootstrap` → 抓同源 HTML（Web 路径）→
+  单次自动重载（`sessionStorage` 5 秒防抖）。全部失败时面板顶部横幅给出「重新载入页面」按钮与
+  分平台的处理建议，而不是停在「加载中…」。
+- **面板自证信息**：任务详情新增「隔离环境实有」（该 pod 真实可见的工具面），
+  预设挂载失败等 setup 提示也随任务记录展示与持久化。
+- **`/status` 的 `pluginVersion` 与 `compat`**：`{ shellApi, indexInject, bootstrap }`，
+  用于一眼确认当前进程加载的版本与接口适配结论。
+
+### 变更
+
+- **白名单与 preset 对齐**：隔离 Agent 的工具来自所挂 preset，因此任务启动后会把配置的白名单
+  与 pod 真实工具面求交（工具面为空时保留原配置），并把结果同时写进系统提示词与任务详情；
+  `tools.restrict()` 也只传本部署确实注册过的名字（0.1.7 对未知名字会直接抛错）。
+- **`KNOWN_TOOLS` 按 0.1.7 工具面重写**：移除已不存在的 `ralph`、`list_subagent_models`，
+  补入 `read_image`、`load_workspace_dependencies`、`cordis_inspect_*`、`plugin_manager` 等；
+  `bash` 保留给非 Windows 部署。
+- **模型选项透传**：子会话沿用主会话的默认模型选择，含 `reasoningEffort`（此前只透传 provider/model）。
+- **面板配置页的 Agent preset 在注册表可用时显示为下拉框**，并标注损坏的 preset。
+- 客户端 `package.json` 的 `dsh.client.platform` 仍为 `"web"`——0.1.7 的 `dsh-client-modules`
+  明确要求该字面量，桌面版也不例外。
+
+### 文档
+
+- **全套文档重写**（`README.md` / `README.en.md` / `使用教程.md` / `CHANGELOG.md`）：
+  统一到 0.1.7 与 v0.1.2 的事实，补齐「与宿主的接口约定（0.1.7）」对照表，
+  并把「已验证的行为」拆成 **(A) v0.1.2 · 桌面版实测** 与 **(B) v0.1.1 · Web 版实测、0.1.7 未复测** 两组，
+  未完成复测的结论不再被当作已验证。
+- 新增「**规格与本实现的差异**」一节，逐条列出 `需求说明.md` 与本实现的有意差异
+  （多轮对话、清理范围、撤销范围、并发与 preset 配置、平台限定、白名单口径）。
+- 新增「桌面版差异」：桌面版 = 同一个 loopback Web 宿主（固定 19387）+ `dsh-web-app`，
+  差异只在页面来源与注入方式；补充「release 版无刷新入口」「改 Host 半需重启」等操作性说明。
+- 诊断端点示例改用桌面版端口 19387，并给出 `compat` 三个字段的读法。
+- **更正过时告警**：旧 README 称未激活的插件行会让 dsh 拒绝启动。0.1.7 的
+  `auditStartupEntries` 只对固定必需集合（`agent-loop`、`webserver`、`modules`、`connection`、
+  `headless-runner`、`acp`、`sdk-jsonrpc-server`）拒绝启动，其它未激活项仅告警；
+  因此「不要写进 home 级 patch」的理由改为「它会作用于所有 profile、在 CLI/TUI profile 里只留下无意义告警」。
+- 「改动生效规则」表补齐 patch 行的热生效，以及客户端半**无需刷新**的模块图热挂载。
+- 教程按当前界面文案逐条校对（面板顶部状态条、任务详情两行工具面、令牌横幅与「重新载入页面」按钮），
+  并补上盘符根跳过自检的排障行。
+
+### 说明
+
+- 本版 Host 半与 Client 半都有改动：`lib/index.js` 被 Node 按 URL 缓存，**改完必须重启应用**；
+  客户端半与 patch 行改动均为热生效（实测：加行即激活，侧边栏入口自动挂载，无需刷新）。
+- 任务链路以「桩上下文 + 真实 HTTP 路由」的离线用例验证：`setConfig` 归一化、
+  `startTask → 越界写探针 → 转写 → 结论`、盘符根跳过自检均按预期落位；
+  桌面版上跑真实任务的复测见 README「已验证的行为」末尾的说明。
+
 ## [0.1.1] - 2026-09-15
 
 ### 新增
@@ -71,6 +154,7 @@
 - **多轮对话不跨进程**：dsh 重启后旧任务只能查看与导出。
 - 面板当前只列文件清单，**不做文件内容预览**（可经 `readSandboxFile` 接口读取，≤300 KB）。
 
-[未发布]: https://github.com/Teow9/dsh-isolation-pod/compare/v0.1.1...HEAD
+[未发布]: https://github.com/Teow9/dsh-isolation-pod/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/Teow9/dsh-isolation-pod/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Teow9/dsh-isolation-pod/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Teow9/dsh-isolation-pod/releases/tag/v0.1.0
