@@ -91,7 +91,7 @@ Host 半只依赖 DSH 的公开服务，不 import 任何 `@deepseek-ai/*` 包�
 |---|---|---|
 | 子会话 | `ctx.agents.create({ sessionId, meta, agentOptions, setup })` | 直接使用；`meta = { cwd: 沙箱根目录, origin: 'subagent' }` |
 | 会话内策略 | `session.append('sandbox/mode' \| 'approval/policy', …)` | 直接使用（`sandbox/mode` 的折叠只读 `data.mode`） |
-| 工具面 | 宿主面按 preset 分层；Windows 上只有 `pwsh`，没有 `bash` | 挂载 preset 后读 `agentCtx.tools.schemas()`，与配置白名单求交 |
+| 工具面 | 宿主面按 preset 分层；Windows 上只有 `pwsh`，没有 `bash` | 挂载 preset 后按**该 pod 的 scope** 取 `agentCtx.tools.schemas(agent)`；**省略 scope 会问到全局面**（与白名单无交集，曾因此让 pod 一个工具都用不了）。真实面还会被该 pod 自己的 `request/header` 覆盖为权威值 |
 | 工具拦截 | `tools.guard(fn)` 权威；`tools.restrict({ allow })` 对未知名字会抛错 | guard 为准；`restrict` 只传本 pod 确实存在的名字，且整体 try/catch |
 | 沙箱判定 | `ctx.sandboxPolicy.resolve({ session })` → `{ mode, workspaceRoot }` | 自检据此确认模式与可写根 |
 | 进程内命令 | `ctx.shell.resolve(req)` + `execute(spec)` → 句柄 `.result()` | 探测 `execute`，无则回退 `shell.run`；`/status.compat.shellApi` 报告结论 |
@@ -159,7 +159,7 @@ curl.exe -s http://127.0.0.1:3080/isolation-pod/status
 ```json
 {
   "ok": true,
-  "build": 7,
+  "build": 8,
   "pluginVersion": "0.1.2",
   "tokenPrefix": "b0ef7657",
   "taskCount": 0,
@@ -209,8 +209,10 @@ curl.exe -s http://127.0.0.1:3080/isolation-pod/status
 并且**不会**自动退回使用工作区或项目目录。
 
 同页还有 **Agent preset**（可用时显示为下拉框）：隔离 Agent 的工具**全部**来自 preset。
-选错 preset 会导致白名单里的工具一个都不存在，因此任务详情会同时列出
-「可用工具」（收敛后的白名单）与「隔离环境实有」（preset 实际提供的工具面）以便对账。
+**白名单只是上限，不会被 preset 求交清空**——preset 没提供的工具，调用时由 guard 打回
+（面板会显示 `隔离舱：工具 X 未被授权`）。
+任务详情因此并排列出「可用工具」（白名单，即配置的上限）与「隔离环境实有」
+（该 pod 真实可见的工具面，优先采用它自己 `request/header` 里的权威清单）以便对账。
 
 ### 任务生命周期
 
@@ -255,7 +257,7 @@ curl.exe -s http://127.0.0.1:3080/isolation-pod/status
 |---|---|---|
 | `sandboxRoot` | `''` | 沙箱根目录（绝对路径）。为空时拒绝执行任务 |
 | `allowWrites` | `true` | 关掉后子会话以 `read-only` 模式运行 |
-| `allowedTools` | `pwsh, read, write, edit, glob, grep` | 工具白名单；运行时再与 pod 实际工具面求交 |
+| `allowedTools` | `pwsh, read, write, edit, glob, grep` | 工具白名单，作为**上限**由 guard 强制执行；不会再与 preset 求交（求交会把「preset 没有」误变成「什么都不许」） |
 | `timeoutMs` | `600000` | **每轮**对话的超时（毫秒），取值被夹在 30 000–7 200 000 之间；超时取消该轮并标记 `timeout` |
 | `readContext` | `true` | 是否把主会话最近若干条消息作为**只读**背景注入任务提示 |
 | `maxConcurrent` | `3` | 同时运行的任务数上限（1–8） |
@@ -364,6 +366,11 @@ Web 版渲染进 HTML，桌面版经 IPC 交给渲染进程。令牌不写磁盘
 - **令牌通道默认关闭**：无 cookie 访问 `/isolation-pod/bootstrap` → `401`；
   无 `x-ipp-token` 访问 `/isolation-pod/api` → `403`。
 - **主会话识别**：面板按 `retainedBy.mainView` 解析出主会话，不再显示「未定位到主会话」。
+- **任务真的跑起来了（桌面版实测，子会话日志为证）**：一次真实任务在
+  `E:\pod-work` 下创建了子会话 `pod-session-pod-mugl59wt1`（cwd = 沙箱根目录，`origin: subagent`），
+  日志里可见 `sandbox/mode = workspace-write`、`approval/policy = never`（均带 `source: delegation`）、
+  越界写自检通过、任务提示中带上了**主会话的只读上下文**（面板识别出的主会话确实是当前会话）、
+  两条未授权调用被 guard 各拒绝一次，最终 `turn/end: completed`。**该次实测同时暴露了下面的工具面缺陷。**
 - **告警判定只针对当前会话**：只有当沙箱根目录落在**你正在看的这个会话**的工作区内时，面板才提示
   「隔离任务生成的文件会出现在你看到的工作区里」；`/status` 的 `sandbox.liveSessions` 可外部核验该判定。
 
@@ -377,8 +384,8 @@ Web 版渲染进 HTML，桌面版经 IPC 交给渲染进程。令牌不写磁盘
   （实测：31 条子会话记录 → 14 条转写条目，与独立解压预测一致）。
 - **进程内多轮对话**：`followUp` 复用同一常驻子 Agent，`turns` 逐轮累加（实测 3 轮、25 条转写）。
 
-> 任务执行链路（建目录 → 越界写自检 → 转写 → 产物 → 导出/撤销）在 0.1.7 上的复测**尚未完成**；
-> 完成后会把结论并入 (A) 组。
+> 产物链路（生成文件 → 导出/撤销）在 0.1.7 上的复测**尚未完成**：上面那次实测因工具面缺陷没走到产物，
+> 修复后需再跑一次。0.1.2 的 `E:\pod-work` 目录也因此是空的。
 
 ## 规格与本实现的差异
 
@@ -391,7 +398,7 @@ Web 版渲染进 HTML，桌面版经 IPC 交给渲染进程。令牌不写磁盘
 | §4.7.16「导出应当可以取消或撤销」 | 仅**复制**模式的导出可撤销 | 「移动」已把源文件移走，撤销无法还原，因此按钮不提供 |
 | §4.8 未列出并发与 preset | 增加 `maxConcurrent`、`presetId` | preset 是 0.1.7 提供工具面的唯一途径，属于宿主结构而非插件选项 |
 | 未限定平台 | 仅 Windows | 目录创建/删除/导出走 PowerShell；macOS / Linux 未验证 |
-| §4.3.5 工具白名单 | 配置白名单 ∩ pod 真实工具面 | 目的相同（未授权不得调用），并额外把「preset 不提供的工具」也排除掉 |
+| §4.3.5 工具白名单 | 配置白名单是**上限**，由 guard 强制执行 | 目的相同（未授权不得调用）；preset 没提供的工具同样会被打回，但白名单本身不会被清空 |
 
 ## 已知限制
 
@@ -405,8 +412,8 @@ Web 版渲染进 HTML，桌面版经 IPC 交给渲染进程。令牌不写磁盘
 7. **日志上限**：内存 500 条 / 任务，落盘 80 条 / 任务，超出部分只存在于子会话日志中。
 8. **本机 profile 级配置**：换机器或换 profile 需重新放置包与 patch 行。
 9. **文件预览有硬上限**：单文件 ≤300 KB，面板一次最多显示 20000 字符（超出提示"已截断显示"）。
-10. **白名单以 preset 为准**：隔离 Agent 的工具来自所挂 preset（Windows 上是 `pwsh`，没有 `bash`）。
-    勾了 preset 不提供的工具不会报错，但任务详情的「隔离环境实有」会为空，该轮调用会被 guard 打回。
+10. **白名单是上限，preset 决定实际存在哪些工具**：勾了 preset 不提供的工具不会报错，
+    但任务详情的「隔离环境实有」里不会有它，调用会被 guard 打回并提示「未被授权」。
 11. **改 Host 半必须重启**：Node 的 ES 模块缓存按 URL 生效，热重载不会重新读盘。
 12. **令牌只在页面加载/自取时注入**：桌面版没有刷新入口，令牌失效时面板会先自取、再自动重载一次。
 13. **盘符根沙箱会跳过越界写自检**：沙箱根目录设为 `E:\` 这类盘符根时没有更上一级可探，

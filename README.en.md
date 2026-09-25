@@ -44,8 +44,8 @@
   Out-of-bounds writes are *hard-denied* by the DSH file sandbox (`FS_SANDBOX_DENIED`), not left to the prompt's
   good behaviour. A pre-flight out-of-bounds write self-check runs before every task and aborts it if the write
   was not denied.
-- **The tool allowlist is enforced** — calls outside the allowlist are rejected outright by `tools.guard()`, and
-  the allowlist itself is narrowed to the pod's real tool surface.
+- **The tool allowlist is enforced** — calls outside the allowlist are rejected outright by `tools.guard()`,
+  and the allowlist is an upper bound rather than something narrowed against the pod's surface.
 - **Return and export are independent** — neither triggers the other; an export is authorized per export and
   must be confirmed again every time.
 - **Resident and approval-free** — loaded from a patch row with the host; configuration and task records survive
@@ -106,7 +106,7 @@ verdict:
 |---|---|---|
 | Child session | `ctx.agents.create({ sessionId, meta, agentOptions, setup })` | Used as-is; `meta = { cwd: sandbox root, origin: 'subagent' }` |
 | In-session policy | `session.append('sandbox/mode' \| 'approval/policy', …)` | Used as-is (the `sandbox/mode` fold reads only `data.mode`) |
-| Tool surface | the host plane is layered per preset; on Windows only `pwsh`, there is no `bash` | after mounting the preset it reads `agentCtx.tools.schemas()` and intersects that with the configured allowlist |
+| Tool surface | the host plane is layered per preset; on Windows only `pwsh`, there is no `bash` | after mounting the preset it asks for **that pod's** scope — `agentCtx.tools.schemas(agent)`; **omitting the scope answers for the global plane** (disjoint from any configured tool, which once left a pod unable to call anything). The pod's own `request/header` later supersedes this with the authoritative list |
 | Tool interception | `tools.guard(fn)` is authoritative; `tools.restrict({ allow })` throws on an unknown name | the guard decides; `restrict` is given only names this pod actually has, and the whole call is try/catch |
 | Sandbox verdict | `ctx.sandboxPolicy.resolve({ session })` → `{ mode, workspaceRoot }` | the self-check confirms the mode and the writable root from it |
 | In-process command | `ctx.shell.resolve(req)` + `execute(spec)` → handle `.result()` | probes for `execute` and falls back to `shell.run`; `/status.compat.shellApi` reports the verdict |
@@ -177,7 +177,7 @@ curl.exe -s http://127.0.0.1:3080/isolation-pod/status
 ```json
 {
   "ok": true,
-  "build": 7,
+  "build": 8,
   "pluginVersion": "0.1.2",
   "tokenPrefix": "b0ef7657",
   "taskCount": 0,
@@ -230,9 +230,10 @@ Open *Config* and enter an **absolute path** (for example `E:\pod-work`). Until 
 any task, and it will **not** silently fall back to your workspace or project directory.
 
 The same page also has **Agent preset** (rendered as a dropdown when available): the pod agent's tools come
-**entirely** from the preset. A mismatched preset leaves none of the allowlisted tools present, so the task
-detail view lists both *allow* (the narrowed allowlist) and *available* (the tool surface the preset actually
-provides) so the two can be reconciled.
+**entirely** from the preset. The allowlist is only an **upper bound** and is never emptied by the preset — a
+tool the preset does not provide is rejected by the guard at call time (`隔离舱：工具 X 未被授权`). The task
+detail view therefore lists *allow* (the configured upper bound) beside *available* (the surface this pod can
+really see, taking the authoritative list from its own `request/header` whenever that arrives).
 
 ### Task lifecycle
 
@@ -408,6 +409,12 @@ were checked against the interfaces, but the conclusions still stand on the old 
   `/isolation-pod/api` without `x-ipp-token` → `403`.
 - **Main-session resolution**: the panel resolves the main session through `retainedBy.mainView` and no longer
   shows `未定位到主会话` ("main session not located").
+- **A task really ran (measured on Desktop; the child-session log is the evidence)**: a real task created the
+  child session `pod-session-pod-mugl59wt1` under `E:\pod-work` (cwd = sandbox root, `origin: subagent`); its log
+  shows `sandbox/mode = workspace-write` and `approval/policy = never` (both `source: delegation`), the
+  out-of-bounds pre-flight passing, the task prompt carrying the main session's **read-only context** (so the
+  panel had indeed identified the current session), two unauthorised calls rejected once each by the guard, and
+  `turn/end: completed`. **That same run exposed the tool-surface defect recorded below.**
 - **The warning is answered for the current session only**: the panel warns
   `注意：沙箱根目录位于当前会话工作区之内，隔离任务生成的文件会出现在你看到的工作区里。` *only* when the
   sandbox root sits inside the workspace of **the session you are looking at**; `/status` exposes
@@ -429,9 +436,9 @@ were checked against the interfaces, but the conclusions still stand on the old 
 - **Multi-turn conversation within one process**: `followUp` reuses the same resident child agent and `turns`
   increments (measured: 3 turns, 25 transcript entries).
 
-> The task-execution path (create directory → out-of-bounds write self-check → transcript → artifacts →
-> export/undo) has **not yet been re-measured** on 0.1.7; once it is, the conclusions will be merged into
-> group (A).
+> The **artefact** path (generating files → export/undo) has **not yet been re-measured** on 0.1.7: the run
+> above never reached it because of the tool-surface defect, and the fix still needs a fresh run. That is also
+> why `E:\pod-work` is empty after the v0.1.2 test.
 
 ## Deltas from the specification
 
@@ -464,9 +471,9 @@ one by one so they can be reconciled:
    again.
 9. **File preview has a hard cap**: one file ≤300 KB, and the panel shows at most 20000 characters at a time
    (beyond that it says "truncated").
-10. **The allowlist follows the preset**: the pod agent's tools come from the mounted preset (on Windows `pwsh`,
-    no `bash`). Ticking a tool the preset does not provide is not an error, but the task detail's *available*
-    surface will be empty and that turn's call is rejected by the guard.
+10. **The allowlist is an upper bound; the preset decides what exists**: the pod agent's tools come from the
+    mounted preset (on Windows `pwsh`, no `bash`). Ticking a tool the preset does not provide is not an error,
+    but *available* will not list it and the call is rejected by the guard as unauthorised.
 11. **Changing the Host half requires a restart**: Node's ES module cache is keyed per URL, so a hot reload does
     not re-read the file from disk.
 12. **The token is only injected at page load or self-fetched**: Desktop has no reload entry, so when the token

@@ -5,7 +5,29 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.1.3] - 2026-09-25
+
+修掉 v0.1.2 引入的一处**功能性回归**：隔离 Agent 的工具面被误判为空，pod 一个工具都用不了。
+本版只有 Host 半与文档变更（`build: 8`）。
+
+### 修复
+
+- **工具面被误判为空，导致隔离 Agent 一个工具都用不了（v0.1.2 的回归）**：
+  为使「白名单」与「preset 实际提供的工具」一致，v0.1.2 在任务启动时用
+  `agentCtx.tools.schemas()` 取工具面并与白名单求交。但 `schemas(scope)` 的 scope 参数是有语义的——
+  **省略 scope 得到的是「全局面」**，而桌面版/Web 面上宿主面按 preset 分层、全局工具与白名单毫无交集，
+  于是交集为空、`task.allow` 被清成 `[]`，pod 只能收到「工具 X 未被授权」的拒绝。
+  实测证据：一次真实任务的子会话日志里，任务提示写着
+  `可用工具（其它工具已被拒绝）：（无：当前 preset 未提供白名单里的任何工具…）`，
+  随后 `pwsh`、`write` 两次调用均被 guard 拒绝。
+  修复：
+  1. 取工具面时传入 **该 pod 的 agent 作为 scope**（`agentCtx.tools.schemas(agent)`）；
+  2. **不再与白名单求交**——白名单只作上限，由 guard 强制执行，因此不可能被清空；
+  3. 真实的工具面以该 pod 自己的 `request/header` 为准（首次派发时到达），覆盖启动期的探测结果；
+  4. 面板的「可用工具」与「隔离环境实有」两行分别表示「白名单上限」与「该 pod 实际可见的工具」，
+     空白的提示语相应改为「白名单为空，请在「配置」勾选工具」。
+  离线用例（桩上下文 + 真实 HTTP 路由）断言：`schemas` 只以 agent 为 scope 调用、
+  白名单不再被清空、`request/header` 会覆盖工具面——三项均通过。
 
 ## [0.1.2] - 2026-09-25
 
@@ -55,6 +77,8 @@
 - **白名单与 preset 对齐**：隔离 Agent 的工具来自所挂 preset，因此任务启动后会把配置的白名单
   与 pod 真实工具面求交（工具面为空时保留原配置），并把结果同时写进系统提示词与任务详情；
   `tools.restrict()` 也只传本部署确实注册过的名字（0.1.7 对未知名字会直接抛错）。
+  > ⚠️ **该项在发布后被确认是缺陷**：`schemas()` 省略 scope 时返回的是全局面，与白名单无交集，
+  > 结果把白名单清空、pod 一个工具都用不了。修正见上方「未发布」一节。
 - **`KNOWN_TOOLS` 按 0.1.7 工具面重写**：移除已不存在的 `ralph`、`list_subagent_models`，
   补入 `read_image`、`load_workspace_dependencies`、`cordis_inspect_*`、`plugin_manager` 等；
   `bash` 保留给非 Windows 部署。
@@ -154,7 +178,8 @@
 - **多轮对话不跨进程**：dsh 重启后旧任务只能查看与导出。
 - 面板当前只列文件清单，**不做文件内容预览**（可经 `readSandboxFile` 接口读取，≤300 KB）。
 
-[未发布]: https://github.com/Teow9/dsh-isolation-pod/compare/v0.1.2...HEAD
+[未发布]: https://github.com/Teow9/dsh-isolation-pod/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/Teow9/dsh-isolation-pod/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Teow9/dsh-isolation-pod/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Teow9/dsh-isolation-pod/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Teow9/dsh-isolation-pod/releases/tag/v0.1.0
